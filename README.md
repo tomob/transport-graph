@@ -9,6 +9,11 @@ to the [GTFS Schedule](https://gtfs.org/schedule/reference/) standard. The
 sample data bundled with the project contains public transit connections in
 Sweden, downloaded from <https://mobilitydatabase.org>.
 
+## Graph design
+
+The model of the graph loaded into Neo4j — its nodes, relationships, and their
+properties — is described in [docs/graph-design.md](docs/graph-design.md).
+
 ## Executables
 
 The project provides two executables:
