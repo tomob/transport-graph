@@ -95,33 +95,31 @@ runs less frequently than route 15, so waiting for it takes longer).
 
 Illustrates the shape of the search performed by `find_connection`: starting
 from the RouteStops located at the origin Stop, traverse `NEXT_STOP` and
-`TRANSFER` edges to reach the RouteStops at the destination Stop, minimizing
-the summed `time` weights. With the
-[Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/) plugin
-this can be expressed directly in Cypher:
+`TRANSFER` edges — following their direction — to reach the RouteStops at
+the destination Stop, minimizing the summed `time` weights. Plain Cypher has
+no native weighted shortest path, so the query enumerates all paths up to a
+hop bound and sums the weights with `reduce()`:
 
 ```cypher
-// One-time: project the pathfinding subgraph.
-CALL gds.graph.project(
-    'transport',
-    'RouteStop',
-    { NEXT_STOP: { properties: 'time' },
-      TRANSFER:   { properties: 'time' } });
-
-// Best connection from $origin to $destination.
-MATCH (origin:RouteStop)-[:LOCATED_AT]->(:Stop {stop_name: $origin})
-MATCH (destination:RouteStop)-[:LOCATED_AT]->(:Stop {stop_name: $destination})
-CALL gds.shortestPath.dijkstra.stream('transport', {
-    sourceNode: origin,
-    targetNode: destination,
-    relationshipWeightProperty: 'time' })
-YIELD totalCost, path
-RETURN [n IN nodes(path) | n.route_stop_id] AS route_stops,
-       totalCost AS total_time
+// The hop bound (*..20) is a tuning constant for the dataset.
+MATCH (origin:Stop {stop_name: $origin})
+MATCH (destination:Stop {stop_name: $destination})
+MATCH p = (origin)<-[:LOCATED_AT]-(:RouteStop)
+          -[:NEXT_STOP|TRANSFER*..20]->
+          (:RouteStop)-[:LOCATED_AT]->(destination)
+WITH p, reduce(total = 0.0, r IN relationships(p) |
+              total + coalesce(r.time, 0.0)) AS total_time
+RETURN [n IN nodes(p) | coalesce(n.route_stop_id, n.stop_name)] AS stops,
+       total_time
 ORDER BY total_time
 LIMIT 1;
 ```
 
+Path enumeration is exponential in the hop bound, and cheaper connections
+that would need more hops are invisible to the query. On larger networks the
+[Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/) plugin
+offers a native Dijkstra; alternatively, the application can fetch the
+topology through neodriver and run pathfinding client-side.
 
 ## Constraints and indexes
 
