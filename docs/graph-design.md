@@ -44,11 +44,15 @@ relationships, where they come from, and their role in the application.
 ### `[:TRANSFER]` (transfer time)
 
 - **Direction:** `(RouteStop) -[:TRANSFER]-> (RouteStop)` (between different
-  routes)
+  routes). Direction is significant: every ordered pair of RouteStops sharing
+  a `Stop` gets its own edge
 - **Source:** generated logically for all `RouteStop` nodes connected (via
   `LOCATED_AT`) to the same `Stop` node
-- **Properties:** weight `time` representing the time needed to make the
-  transfer, averaged across all trips
+- **Properties:** weight `time` representing the wait for the next departure
+  of the target route at the shared stop, computed from `stop_times.txt`
+  (e.g. the average headway between consecutive departures of the target
+  route's trips at that stop). Because the wait depends on the schedule of
+  the route being transferred to, it can differ between directions
 
 ## Structure example
 
@@ -70,19 +74,22 @@ graph LR
     RS_4_A -- LOCATED_AT --> STOP_A
     RS_4_B -- LOCATED_AT --> STOP_B
 
-    RS_15_A -- NEXT_STOP --> RS_15_B
-    RS_4_A -- NEXT_STOP --> RS_4_B
+    RS_15_A -- "NEXT_STOP 3 min" --> RS_15_B
+    RS_4_A -- "NEXT_STOP 5 min" --> RS_4_B
 
-    RS_15_A -. TRANSFER .- RS_4_A
-    RS_15_B -. TRANSFER .- RS_4_B
+    RS_15_A -. "TRANSFER 12 min" .-> RS_4_A
+    RS_4_A -. "TRANSFER 4 min" .-> RS_15_A
+    RS_15_B -. "TRANSFER 12 min" .-> RS_4_B
+    RS_4_B -. "TRANSFER 4 min" .-> RS_15_B
 
     classDef stop fill:#fcd34d,stroke:#333
     classDef routestop fill:#93c5fd,stroke:#333
 ```
 
-`TRANSFER` edges are drawn without arrowheads because they are traversable in
-both directions; in the database they are stored with a direction (as all
-Neo4j relationships are), which queries simply ignore.
+Each pair of RouteStops sharing a `Stop` is connected by two `TRANSFER`
+edges, one per direction, each with its own `time` weight: the wait depends
+on the schedule of the route being transferred to (in the example, route 4
+runs less frequently than route 15, so waiting for it takes longer).
 
 ## Pathfinding (example query)
 
@@ -115,10 +122,6 @@ ORDER BY total_time
 LIMIT 1;
 ```
 
-The query is illustrative — whether pathfinding ultimately runs inside Neo4j
-(as above, which requires the GDS plugin) or in the OCaml application after
-fetching the topology is an implementation decision; the shape of the search
-is the same either way.
 
 ## Constraints and indexes
 
