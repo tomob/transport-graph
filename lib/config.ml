@@ -27,7 +27,7 @@ let make url user password database =
 (* [Error msg] when a value required to connect is missing. *)
 let check t =
   let missing =
-    (if t.url = "" then [ "--url / NEO4J_URL" ] else []) @
+    (if t.url = "" then [ "--uri / NEO4J_URI" ] else []) @
     (if t.password = "" then [ "--password / NEO4J_PASSWORD" ] else [])
   in
   match missing with
@@ -38,9 +38,9 @@ let check t =
 (* Cmdliner terms for the connection options, shared by both executables. *)
 
 let url_arg =
-  let doc = "Connect to Neo4j at this URL." in
-  let env = Cmd.Env.info "NEO4J_URL" in
-  Arg.(value & opt (some string) None & info [ "u"; "url" ] ~doc ~docv:"URL" ~env)
+  let doc = "Connect to Neo4j at this URI." in
+  let env = Cmd.Env.info "NEO4J_URI" in
+  Arg.(value & opt (some string) None & info [ "u"; "uri" ] ~doc ~docv:"URI" ~env)
 
 let user_arg =
   let doc = "Connect to Neo4j as this user." in
