@@ -43,7 +43,7 @@ to `neo4j`). Run either executable with `--help` for details.
 
 ```sh
 # Load GTFS data into Neo4j
-dune exec bin/load_data.exe -- --data gtfs.zip
+dune exec bin/load_data.exe -- gtfs.zip
 
 # Find the best connection between two stops
 dune exec bin/find_connection.exe -- --from "Stockholm C" --to "Uppsala C"
