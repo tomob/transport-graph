@@ -14,4 +14,12 @@
   (neodriver
    (>= 0.9.0))
   (cmdliner
-   (>= 2.1))))
+   (>= 2.1))
+  (camlzip
+   (>= 1.14))
+  (ppx_marshal
+   (>= 0.6))
+  (gendarme
+   (>= 0.6))
+  (gendarme-csv
+   (>= 0.6))))

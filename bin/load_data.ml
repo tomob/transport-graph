@@ -23,8 +23,11 @@ let process_data ~clear_db driver =
 let run (config : Transport_graph.Config.t) data clear_db : (unit, string) result =
   Printf.printf "connection: %s (user: %s, database: %s)\n"
     config.url config.user config.database;
-  Printf.printf "data: %s\n" data;
   Printf.printf "clear-db: %b\n" clear_db;
+  let* gtfs = Transport_graph.Gtfs.load data in
+  Printf.printf "data: %d stops, %d routes, %d trips, %d stop times\n"
+    (List.length gtfs.stops) (List.length gtfs.routes)
+    (List.length gtfs.trips) (List.length gtfs.stop_times);
   Eio_main.run (fun env ->
     let net = Eio.Stdenv.net env in
     let clock = Eio.Stdenv.mono_clock env in

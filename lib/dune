@@ -1,3 +1,4 @@
 (library
  (name transport_graph)
- (libraries neodriver cmdliner))
+ (libraries neodriver cmdliner zip gendarme gendarme-csv)
+ (preprocess (pps ppx_marshal)))
