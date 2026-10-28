@@ -11,12 +11,13 @@ let clear_db =
   let doc = "Whether to clear the database before importing." in
   Arg.(value & flag & info [ "c"; "clear-db" ] ~doc ~docv:"BOOL" ~absent:"false")
 
-let process_data driver =
+let process_data ~clear_db driver =
   let session = Driver.session driver in
-  let* result = Session.run session ~query:"RETURN 1 AS n" ~parameters:[] in
-  match Neo4jResult.values result with
-  | Ok [ [Values.Int n]] -> Printf.printf "N: %Ld\n" n; Ok ()
-  | _ -> Ok ()
+  let result =
+    if clear_db then Transport_graph.Db.clear_db session else Ok ()
+  in
+  Session.close session;
+  result
 
 
 let run (config : Transport_graph.Config.t) data clear_db : (unit, string) result =
@@ -28,8 +29,15 @@ let run (config : Transport_graph.Config.t) data clear_db : (unit, string) resul
     let net = Eio.Stdenv.net env in
     let clock = Eio.Stdenv.mono_clock env in
     Eio.Switch.run (fun sw ->
-      Result.bind (Driver.connect ~uri:config.url ~auth:(Conn.basic_auth ~credentials:config.password ()) net clock sw)
-        process_data
+      let* workspace_config =
+        Config.make_workspace_config ~database:(Some config.database) ()
+      in
+      let* driver =
+        Driver.connect ~uri:config.url
+          ~auth:(Conn.basic_auth ~credentials:config.password ())
+          ~workspace_config net clock sw
+      in
+      process_data ~clear_db driver
     )
   ) |> Result.map_error Errors.to_string
 

@@ -35,8 +35,8 @@ dune build
 
 ## Usage
 
-Both executables read the Neo4j connection settings from `--url`, `--user`,
-`--password` and `--database`, falling back to the `NEO4J_URL`,
+Both executables read the Neo4j connection settings from `--uri`, `--user`,
+`--password` and `--database`, falling back to the `NEO4J_URI`,
 `NEO4J_USERNAME`, `NEO4J_PASSWORD` and `NEO4J_DATABASE` environment
 variables (an empty value counts as unset; the user and the database default
 to `neo4j`). Run either executable with `--help` for details.
