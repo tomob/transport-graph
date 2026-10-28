@@ -1,4 +1,7 @@
 open Cmdliner
+open Neodriver
+
+let ( let* ) = Result.bind
 
 let data =
   let doc = "$(docv) is the path to the ZIP file with the GTFS data to import." in
@@ -8,13 +11,27 @@ let clear_db =
   let doc = "Whether to clear the database before importing." in
   Arg.(value & flag & info [ "c"; "clear-db" ] ~doc ~docv:"BOOL" ~absent:"false")
 
+let process_data driver =
+  let session = Driver.session driver in
+  let* result = Session.run session ~query:"RETURN 1 AS n" ~parameters:[] in
+  match Neo4jResult.values result with
+  | Ok [ [Values.Int n]] -> Printf.printf "N: %Ld\n" n; Ok ()
+  | _ -> Ok ()
+
+
 let run (config : Transport_graph.Config.t) data clear_db : (unit, string) result =
-  (* TODO: connect, optionally clear the database, load the data. *)
   Printf.printf "connection: %s (user: %s, database: %s)\n"
     config.url config.user config.database;
   Printf.printf "data: %s\n" data;
   Printf.printf "clear-db: %b\n" clear_db;
-  Ok ()
+  Eio_main.run (fun env ->
+    let net = Eio.Stdenv.net env in
+    let clock = Eio.Stdenv.mono_clock env in
+    Eio.Switch.run (fun sw ->
+      Result.bind (Driver.connect ~uri:config.url ~auth:(Conn.basic_auth ~credentials:config.password ()) net clock sw)
+        process_data
+    )
+  ) |> Result.map_error Errors.to_string
 
 let main =
   let open Term.Syntax in
