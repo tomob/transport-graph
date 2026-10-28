@@ -1,9 +1,9 @@
 (executable
  (name load_data)
  (public_name transport_graph_load_data)
- (libraries transport_graph))
+ (libraries transport_graph cmdliner))
 
 (executable
  (name find_connection)
  (public_name transport_graph_find_connection)
- (libraries transport_graph))
+ (libraries transport_graph cmdliner))
