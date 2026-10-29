@@ -63,6 +63,42 @@ let load_stops driver stops =
   in
   run 0 (chunk batch_size stops)
 
+(* The RouteStop nodes together with their LOCATED_AT edges — one
+   pass, every row a unique (route, stop) pair derived in Graph. The Stop is
+   matched before anything is created, so an inconsistent row cannot leave
+   an orphaned node behind. *)
+let load_route_stops driver route_stops =
+  let query =
+    "UNWIND $rows AS row \
+     MATCH (s:Stop { stop_id: row.stop_id }) \
+     CREATE (rs:RouteStop { route_stop_id: row.id, route_id: row.route_id, \
+                            route_short_name: row.name }) \
+     CREATE (rs)-[:LOCATED_AT]->(s)"
+  in
+  let row_value (rs : Graph.route_stop) =
+    let open Neodriver.Values in
+    Map
+      [ ("id", String rs.route_stop_id)
+      ; ("route_id", String rs.route_id)
+      ; ("name", String rs.route_short_name)
+      ; ("stop_id", Int (Int64.of_int rs.stop_id)) ]
+  in
+  let rec run nodes relationships = function
+    | [] ->
+      Printf.printf "route stops: %d nodes, %d LOCATED_AT created\n" nodes
+        relationships;
+      Ok ()
+    | batch :: rest ->
+      let parameters =
+        [ ("rows", Neodriver.Values.List (List.map row_value batch)) ]
+      in
+      let* eager = Neodriver.Driver.execute_query driver ~query ~parameters in
+      let counters = eager.summary.counters in
+      run (nodes + counters.nodes_created)
+        (relationships + counters.relationships_created) rest
+  in
+  run 0 0 (chunk batch_size route_stops)
+
 (* Delete every Stop and RouteStop node together with all its relationships
    (LOCATED_AT, NEXT_STOP, BOARD) — these are the only node types of the
    model, so this clears the whole graph. *)

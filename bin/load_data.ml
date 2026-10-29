@@ -12,14 +12,15 @@ let clear_db =
   let doc = "Whether to clear the database before importing." in
   Arg.(value & flag & info [ "c"; "clear-db" ] ~doc ~docv:"BOOL" ~absent:"false")
 
-let process_data ~clear_db (gtfs : Gtfs.t) driver =
+let process_data ~clear_db (graph : Graph.t) driver =
   let session = Driver.session driver in
   let result =
     let* () = Db.create_constraints session in
     let* () =
       if clear_db then Db.clear_db session else Ok ()
     in
-    Db.load_stops driver gtfs.stops
+    let* () = Db.load_stops driver graph.stops in
+    Db.load_route_stops driver graph.route_stops
   in
   Session.close session;
   result
@@ -33,6 +34,8 @@ let run (config : Config.t) data clear_db : (unit, string) result =
   Printf.printf "data: %d stops, %d routes, %d trips, %d stop times\n"
     (List.length gtfs.stops) (List.length gtfs.routes)
     (List.length gtfs.trips) (List.length gtfs.stop_times);
+  let* graph = Graph.derive gtfs in
+  Printf.printf "graph: %d route stops\n" (List.length graph.route_stops);
   Eio_main.run (fun env ->
     let net = Eio.Stdenv.net env in
     let clock = Eio.Stdenv.mono_clock env in
@@ -45,7 +48,7 @@ let run (config : Config.t) data clear_db : (unit, string) result =
           ~auth:(Conn.basic_auth ~credentials:config.password ())
           ~workspace_config net clock sw
       in
-      process_data ~clear_db gtfs driver
+      process_data ~clear_db graph driver
     )
   ) |> Result.map_error Errors.to_string
 
