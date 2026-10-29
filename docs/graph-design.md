@@ -30,6 +30,10 @@ relationships, where they come from, and their role in the application.
 - **Direction:** `(RouteStop) -[:LOCATED_AT]-> (Stop)`
 - **Source:** import logic (each unique `RouteStop` inherits its `stop_id` and
   is attached to the corresponding `Stop`)
+- **Role:** anchors a `RouteStop` to its physical `Stop`. In pathfinding it is
+  the free leg of arriving at a stop — the destination via its forward
+  direction, the origin via its reverse — and, followed by `BOARD`, the first
+  half of a transfer
 
 ### `[:NEXT_STOP]` (travel time)
 
@@ -41,18 +45,32 @@ relationships, where they come from, and their role in the application.
   between the `arrival_time` at stop N+1 and the `departure_time` at stop N),
   averaged into a single constant value across all trips of a given route
 
-### `[:TRANSFER]` (transfer time)
+### `[:BOARD]` (transfer wait)
 
-- **Direction:** `(RouteStop) -[:TRANSFER]-> (RouteStop)` (between different
-  routes). Direction is significant: every ordered pair of RouteStops sharing
-  a `Stop` gets its own edge
-- **Source:** generated logically for all `RouteStop` nodes connected (via
-  `LOCATED_AT`) to the same `Stop` node
-- **Properties:** weight `time` representing the wait for the next departure
-  of the target route at the shared stop, computed from `stop_times.txt`
-  (e.g. the average headway between consecutive departures of the target
-  route's trips at that stop). Because the wait depends on the schedule of
-  the route being transferred to, it can differ between directions
+- **Direction:** `(Stop) -[:BOARD]-> (RouteStop)`
+- **Source:** one edge per `RouteStop`, derived from `stop_times.txt`
+- **Properties:** weight `time`, in minutes, representing the expected wait
+  for the next departure of the boarded route at that stop: half the average
+  headway between the consecutive departures of that route's trips at that
+  stop (arriving at a random moment, the expected wait is half the headway;
+  use the full headway for a worst-case estimate). The value is specific to
+  the (route, stop) pair — nothing is averaged across routes or stops —
+  mirroring the static simplification already made by `NEXT_STOP` (one
+  constant per (route, stop) instead of a timetable)
+- **Role:** re-boarding the network on a new line at a stop. A transfer pays
+  it: leaving the current line via `LOCATED_AT` into the shared `Stop` and
+  `BOARD`ing the next line. Starting the journey does not: the search enters
+  the graph directly at the origin's RouteStops (the query anchors there via
+  the reverse `LOCATED_AT`), so neither the initial boarding nor the arrival
+  at the destination costs anything
+
+One `BOARD` edge per `RouteStop` carries the same information that pairwise
+transfer edges between RouteStops would (the wait depends only on the
+boarded route and the stop, not on the line arrived on) — without their
+quadratic blow-up: a stop served by R routes would otherwise get
+R × (R − 1) directed edges. For the Sweden feed this is 147 607 `BOARD`
+edges instead of 11 167 762 pairwise ones; Stockholm C alone, served by
+1 128 routes, would have contributed ~1.27 M edges on its own.
 
 ## Structure example
 
@@ -77,35 +95,41 @@ graph LR
     RS_15_A -- "NEXT_STOP 3 min" --> RS_15_B
     RS_4_A -- "NEXT_STOP 5 min" --> RS_4_B
 
-    RS_15_A -. "TRANSFER 12 min" .-> RS_4_A
-    RS_4_A -. "TRANSFER 4 min" .-> RS_15_A
-    RS_15_B -. "TRANSFER 12 min" .-> RS_4_B
-    RS_4_B -. "TRANSFER 4 min" .-> RS_15_B
+    STOP_A -- "BOARD 4 min" --> RS_15_A
+    STOP_A -- "BOARD 12 min" --> RS_4_A
+    STOP_B -- "BOARD 4 min" --> RS_15_B
+    STOP_B -- "BOARD 12 min" --> RS_4_B
 
     classDef stop fill:#fcd34d,stroke:#333
     classDef routestop fill:#93c5fd,stroke:#333
 ```
 
-Each pair of RouteStops sharing a `Stop` is connected by two `TRANSFER`
-edges, one per direction, each with its own `time` weight: the wait depends
-on the schedule of the route being transferred to (in the example, route 4
-runs less frequently than route 15, so waiting for it takes longer).
+A journey from A to B on route 15 is `RS_15_A -NEXT_STOP 3→ RS_15_B
+-LOCATED_AT→ STOP_B` — 3 minutes: entering the network at the origin and
+arriving at the destination are free. Switching to route 4 at A pays `BOARD`:
+`RS_15_A -LOCATED_AT→ STOP_A -BOARD 12→ RS_4_A -NEXT_STOP 5→ RS_4_B
+-LOCATED_AT→ STOP_B` — 17 minutes. The wait depends only on the boarded route
+(route 4 runs less frequently than route 15, so boarding it takes longer).
+One `BOARD` edge per `RouteStop` carries the same information the pairwise
+transfers would, without their quadratic blow-up.
 
 ## Pathfinding (example query)
 
-Illustrates the shape of the search performed by `find_connection`: starting
-from the RouteStops located at the origin Stop, traverse `NEXT_STOP` and
-`TRANSFER` edges — following their direction — to reach the RouteStops at
-the destination Stop, minimizing the summed `time` weights. Plain Cypher has
-no native weighted shortest path, so the query enumerates all paths up to a
-hop bound and sums the weights with `reduce()`:
+Illustrates the shape of the search performed by `find_connection`: entering
+the network at one of the RouteStops of the origin Stop (free — the anchor
+traverses `LOCATED_AT` backwards), traveling along `NEXT_STOP` edges,
+transferring through shared stops (`LOCATED_AT` into the `Stop`, then
+`BOARD` out of it, paying the wait), and arriving at the destination Stop
+via `LOCATED_AT` (free), minimizing the summed `time` weights. Plain Cypher
+has no native weighted shortest path, so the query enumerates all paths up
+to a hop bound and sums the weights with `reduce()`:
 
 ```cypher
-// The hop bound (*..20) is a tuning constant for the dataset.
+// The hop bound (*..40; a transfer costs two hops) is a tuning constant.
 MATCH (origin:Stop {stop_name: $origin})
 MATCH (destination:Stop {stop_name: $destination})
 MATCH p = (origin)<-[:LOCATED_AT]-(:RouteStop)
-          -[:NEXT_STOP|TRANSFER*..20]->
+          -[:NEXT_STOP|LOCATED_AT|BOARD*..40]->
           (:RouteStop)-[:LOCATED_AT]->(destination)
 WITH p, reduce(total = 0.0, r IN relationships(p) |
               total + coalesce(r.time, 0.0)) AS total_time
