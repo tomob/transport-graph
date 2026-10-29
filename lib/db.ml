@@ -36,6 +36,18 @@ let create_constraints session =
   run "CREATE CONSTRAINT route_stop_id IF NOT EXISTS \
        FOR (rs:RouteStop) REQUIRE rs.route_stop_id IS UNIQUE"
 
+(* The stop_name lookup index used by find_connection — created once the
+   data is loaded, so the bulk load does not pay for maintaining it. *)
+let create_stop_name_index session =
+  let* result =
+    Neodriver.Session.run session
+      ~query:"CREATE INDEX stop_name IF NOT EXISTS \
+              FOR (s:Stop) ON (s.stop_name)"
+      ~parameters:[]
+  in
+  let* _summary = Neodriver.Neo4jResult.consume result in
+  Ok ()
+
 (* The Stop nodes, straight from stops.txt. Each batch runs in its
    own managed, retried transaction (Driver.execute_query). *)
 let load_stops driver stops =
@@ -136,6 +148,45 @@ let load_next_stops driver next_stops =
       run (created + eager.summary.counters.relationships_created) rest
   in
   run 0 (chunk batch_size next_stops)
+
+(* The BOARD edges: one per RouteStop — the expected wait (half the average
+   headway) to board that route at that stop. Both endpoints are matched
+   before anything is created, and the final counter must account for every
+   row. *)
+let load_boards driver boards =
+  let query =
+    "UNWIND $rows AS row \
+     MATCH (s:Stop { stop_id: row.stop_id }) \
+     MATCH (rs:RouteStop { route_stop_id: row.route_stop_id }) \
+     CREATE (s)-[:BOARD { time: row.time }]->(rs)"
+  in
+  let row_value (b : Graph.board) =
+    let open Neodriver.Values in
+    Map
+      [ ("stop_id", Int (Int64.of_int b.stop_id))
+      ; ("route_stop_id", String b.route_stop_id)
+      ; ("time", Float b.time) ]
+  in
+  let expected = List.length boards in
+  let rec run created = function
+    | [] ->
+      if created <> expected then
+        Error
+          (Neodriver.Errors.Session_error
+             (Printf.sprintf "board: created %d of %d relationships" created
+                expected))
+      else begin
+        Printf.printf "board: %d created\n" created;
+        Ok ()
+      end
+    | batch :: rest ->
+      let parameters =
+        [ ("rows", Neodriver.Values.List (List.map row_value batch)) ]
+      in
+      let* eager = Neodriver.Driver.execute_query driver ~query ~parameters in
+      run (created + eager.summary.counters.relationships_created) rest
+  in
+  run 0 (chunk batch_size boards)
 
 (* Delete every Stop and RouteStop node together with all its relationships
    (LOCATED_AT, NEXT_STOP, BOARD) — these are the only node types of the

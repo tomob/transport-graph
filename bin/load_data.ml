@@ -21,7 +21,9 @@ let process_data ~clear_db (graph : Graph.t) driver =
     in
     let* () = Db.load_stops driver graph.stops in
     let* () = Db.load_route_stops driver graph.route_stops in
-    Db.load_next_stops driver graph.next_stops
+    let* () = Db.load_next_stops driver graph.next_stops in
+    let* () = Db.load_boards driver graph.boards in
+    Db.create_stop_name_index session
   in
   Session.close session;
   result
@@ -36,8 +38,9 @@ let run (config : Config.t) data clear_db : (unit, string) result =
     (List.length gtfs.stops) (List.length gtfs.routes)
     (List.length gtfs.trips) (List.length gtfs.stop_times);
   let* graph = Graph.derive gtfs in
-  Printf.printf "graph: %d route stops, %d next stops\n"
-    (List.length graph.route_stops) (List.length graph.next_stops);
+  Printf.printf "graph: %d route stops, %d next stops, %d board edges\n"
+    (List.length graph.route_stops) (List.length graph.next_stops)
+    (List.length graph.boards);
   Eio_main.run (fun env ->
     let net = Eio.Stdenv.net env in
     let clock = Eio.Stdenv.mono_clock env in

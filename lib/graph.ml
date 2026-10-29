@@ -16,10 +16,17 @@ type next_stop = {
   time : float;      (* averaged travel time, minutes *)
 }
 
+type board = {
+  stop_id : int;           (* the Stop the journey boards at *)
+  route_stop_id : string;  (* the RouteStop being boarded *)
+  time : float;            (* half the average headway, minutes *)
+}
+
 type t = {
   stops : Gtfs.stop list;
   route_stops : route_stop list;
   next_stops : next_stop list;
+  boards : board list;
 }
 
 (* "H+:MM:SS" to seconds since the start of the service day — GTFS allows
@@ -164,7 +171,55 @@ let next_stops (gtfs : Gtfs.t) : (next_stop list, string) result =
          ; time = float_of_int sum /. (60.0 *. float_of_int n) } :: acc)
        sums [])
 
+(* One BOARD edge per (route, stop): half the average gap between the
+   route's consecutive departures at that stop — the expected wait when
+   boarding at a random moment. A single departure means a daily cycle: a
+   24 h headway. *)
+let boards (gtfs : Gtfs.t) : (board list, string) result =
+  let trip_route = Hashtbl.create (1 lsl 19) in
+  List.iter
+    (fun (trip : Gtfs.trip) ->
+      Hashtbl.replace trip_route trip.trip_id trip.route_id)
+    gtfs.trips;
+  (* (earliest, latest departure in seconds, count) per (route, stop) *)
+  let deps = Hashtbl.create (1 lsl 18) in
+  let rec add = function
+    | [] -> Ok ()
+    | (st : Gtfs.stop_time) :: rest ->
+      (match Hashtbl.find_opt trip_route st.trip_id with
+       | None ->
+         Error
+           (Printf.sprintf "stop_times: trip %d not found in trips.txt"
+              st.trip_id)
+       | Some route_id ->
+         let* dep = parse_time ~trip:st.trip_id st.departure_time in
+         let key = (route_id, st.stop_id) in
+         let earliest, latest, n =
+           match Hashtbl.find_opt deps key with
+           | Some v -> v
+           | None -> (dep, dep, 0)
+         in
+          let earliest = if dep < earliest then dep else earliest in
+          let latest = if dep > latest then dep else latest in
+          Hashtbl.replace deps key (earliest, latest, n + 1);
+         add rest)
+  in
+  let* () = add gtfs.stop_times in
+  Ok
+    (Hashtbl.fold
+       (fun (route_id, stop_id) (earliest, latest, n) acc ->
+         let headway =
+           if n > 1 then
+             float_of_int (latest - earliest) /. float_of_int (n - 1)
+           else 86_400.0
+         in
+         { stop_id
+         ; route_stop_id = route_id ^ ":" ^ string_of_int stop_id
+         ; time = headway /. 120.0 } :: acc)
+       deps [])
+
 let derive (gtfs : Gtfs.t) : (t, string) result =
   let* route_stops = route_stops gtfs in
   let* next_stops = next_stops gtfs in
-  Ok { stops = gtfs.stops; route_stops; next_stops }
+  let* boards = boards gtfs in
+  Ok { stops = gtfs.stops; route_stops; next_stops; boards }
