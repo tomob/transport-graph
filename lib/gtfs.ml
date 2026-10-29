@@ -6,9 +6,14 @@
 
 let ( let* ) = Result.bind
 
-(* A row of stops.txt: a physical stop. *)
+(* Identifiers that the target feeds carry as plain numbers are parsed as
+   [int] (stop_id: up to 9 digits; trip_id: up to 18, still well below the
+   63-bit int range); route_id stays a string — in the Sweden feed every
+   route_id carries a variant suffix ("100000000001000001-1"). A non-numeric
+   value where a number is expected fails the whole parse. *)
+
 type stop = {
-  stop_id : string [@csv "stop_id"];
+  stop_id : int [@csv "stop_id"];
   stop_name : string [@csv "stop_name"];
   stop_lat : float [@csv "stop_lat"];
   stop_lon : float [@csv "stop_lon"];
@@ -23,15 +28,15 @@ type route = {
 (* A row of trips.txt. *)
 type trip = {
   route_id : string [@csv "route_id"];
-  trip_id : string [@csv "trip_id"];
+  trip_id : int [@csv "trip_id"];
 } [@@marshal]
 
 (* A row of stop_times.txt. *)
 type stop_time = {
-  trip_id : string [@csv "trip_id"];
+  trip_id : int [@csv "trip_id"];
   arrival_time : string [@csv "arrival_time"];
   departure_time : string [@csv "departure_time"];
-  stop_id : string [@csv "stop_id"];
+  stop_id : int [@csv "stop_id"];
   stop_sequence : int [@csv "stop_sequence"];
 } [@@marshal]
 

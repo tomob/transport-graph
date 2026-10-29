@@ -1,5 +1,6 @@
 open Cmdliner
 open Neodriver
+open Transport_graph
 
 let ( let* ) = Result.bind
 
@@ -11,21 +12,24 @@ let clear_db =
   let doc = "Whether to clear the database before importing." in
   Arg.(value & flag & info [ "c"; "clear-db" ] ~doc ~docv:"BOOL" ~absent:"false")
 
-let process_data ~clear_db driver =
+let process_data ~clear_db (gtfs : Gtfs.t) driver =
   let session = Driver.session driver in
   let result =
-    let* () = Transport_graph.Db.create_constraints session in
-    if clear_db then Transport_graph.Db.clear_db session else Ok ()
+    let* () = Db.create_constraints session in
+    let* () =
+      if clear_db then Db.clear_db session else Ok ()
+    in
+    Db.load_stops driver gtfs.stops
   in
   Session.close session;
   result
 
 
-let run (config : Transport_graph.Config.t) data clear_db : (unit, string) result =
+let run (config : Config.t) data clear_db : (unit, string) result =
   Printf.printf "connection: %s (user: %s, database: %s)\n"
     config.url config.user config.database;
   Printf.printf "clear-db: %b\n" clear_db;
-  let* gtfs = Transport_graph.Gtfs.load data in
+  let* gtfs = Gtfs.load data in
   Printf.printf "data: %d stops, %d routes, %d trips, %d stop times\n"
     (List.length gtfs.stops) (List.length gtfs.routes)
     (List.length gtfs.trips) (List.length gtfs.stop_times);
@@ -34,23 +38,23 @@ let run (config : Transport_graph.Config.t) data clear_db : (unit, string) resul
     let clock = Eio.Stdenv.mono_clock env in
     Eio.Switch.run (fun sw ->
       let* workspace_config =
-        Config.make_workspace_config ~database:(Some config.database) ()
+        Neodriver.Config.make_workspace_config ~database:(Some config.database) ()
       in
       let* driver =
         Driver.connect ~uri:config.url
           ~auth:(Conn.basic_auth ~credentials:config.password ())
           ~workspace_config net clock sw
       in
-      process_data ~clear_db driver
+      process_data ~clear_db gtfs driver
     )
   ) |> Result.map_error Errors.to_string
 
 let main =
   let open Term.Syntax in
-  let+ config = Transport_graph.Config.term
+  let+ config = Config.term
   and+ data = data
   and+ clear_db = clear_db in
-  Result.bind (Transport_graph.Config.check config)
+  Result.bind (Config.check config)
     (fun _ -> run config data clear_db)
 
 let cmd =
@@ -59,4 +63,4 @@ let cmd =
   Cmd.make (Cmd.info "load_data" ~doc ~man) main
 
 let () =
-  exit (Cmd.eval_result ~env:Transport_graph.Config.env_lookup cmd)
+  exit (Cmd.eval_result ~env:Config.env_lookup cmd)
