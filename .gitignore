@@ -34,3 +34,6 @@ setup.log
 
 # Local OPAM switch
 _opam/
+
+# Local Neo4j instance credentials (password file dropped next to the project)
+Neo4j-*-Created-*.txt
