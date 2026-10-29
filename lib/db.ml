@@ -99,6 +99,44 @@ let load_route_stops driver route_stops =
   in
   run 0 0 (chunk batch_size route_stops)
 
+(* The NEXT_STOP edges with their route-averaged travel times. Both
+   endpoints are matched before anything is created, and the final counter
+   must account for every row. *)
+let load_next_stops driver next_stops =
+  let query =
+    "UNWIND $rows AS row \
+     MATCH (a:RouteStop { route_stop_id: row.from }) \
+     MATCH (b:RouteStop { route_stop_id: row.to }) \
+     CREATE (a)-[:NEXT_STOP { time: row.time }]->(b)"
+  in
+  let row_value (n : Graph.next_stop) =
+    let open Neodriver.Values in
+    Map
+      [ ("from", String n.from_id)
+      ; ("to", String n.to_id)
+      ; ("time", Float n.time) ]
+  in
+  let expected = List.length next_stops in
+  let rec run created = function
+    | [] ->
+      if created <> expected then
+        Error
+          (Neodriver.Errors.Session_error
+             (Printf.sprintf "next stops: created %d of %d relationships"
+                created expected))
+      else begin
+        Printf.printf "next stops: %d created\n" created;
+        Ok ()
+      end
+    | batch :: rest ->
+      let parameters =
+        [ ("rows", Neodriver.Values.List (List.map row_value batch)) ]
+      in
+      let* eager = Neodriver.Driver.execute_query driver ~query ~parameters in
+      run (created + eager.summary.counters.relationships_created) rest
+  in
+  run 0 (chunk batch_size next_stops)
+
 (* Delete every Stop and RouteStop node together with all its relationships
    (LOCATED_AT, NEXT_STOP, BOARD) — these are the only node types of the
    model, so this clears the whole graph. *)
