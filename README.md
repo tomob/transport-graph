@@ -21,7 +21,8 @@ The project provides three executables:
 - `load_data` — reads GTFS files, parses them, and loads the data into a Neo4j
   database
 - `find_connection` — takes the names of two stops on input and prints the best
-  connection found between them
+  connection found between them (uses the [Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/)
+  plugin — see the note below)
 - `find_stop` — takes a fragment of a stop name and prints the stops whose
   name contains it (case-insensitive)
 
@@ -53,6 +54,18 @@ dune exec bin/find_connection.exe -- --from "Stockholm C" --to "Uppsala C"
 # Look up stops by a fragment of their name
 dune exec bin/find_stop.exe -- centralstation
 ```
+
+`find_connection` requires the [Graph Data Science](https://neo4j.com/docs/graph-data-science/)
+capability on the server and supports both of its deployments: the GDS
+plugin (self-managed Neo4j, Docker) and Aura Graph Analytics, where GDS
+runs in an ephemeral session created together with the graph projection
+(the session memory is set to 2 GB; note that Aura bills sessions by
+minute with a 10-minute minimum, though the Free and Pro Trial tiers are
+not billed). The command projects the graph in memory, temporarily adds
+free relationships from the origin stop to its routes (deleted after the
+search) and runs the library's native Dijkstra. The plain-Cypher
+enumeration from the design document does not finish on a graph of this
+size.
 
 ## Testing
 

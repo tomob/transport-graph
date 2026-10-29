@@ -140,10 +140,17 @@ LIMIT 1;
 ```
 
 Path enumeration is exponential in the hop bound, and cheaper connections
-that would need more hops are invisible to the query. On larger networks the
-[Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/) plugin
-offers a native Dijkstra; alternatively, the application can fetch the
-topology through neodriver and run pathfinding client-side.
+that would need more hops are invisible to the query. On the full Sweden
+feed this is not a hypothetical caveat: even the one-transfer form of the
+query does not finish, because every transfer through a hub branches into
+hundreds of routes and Cypher shares no traversal work between rows.
+`find_connection` therefore uses the
+[Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/)
+plugin instead — its native Dijkstra over an in-memory projection of the
+graph, with temporary zero-cost ANCHOR relationships from the origin Stop to
+its RouteStops carrying the free entry into the network (created for the
+duration of the search, then deleted). Alternatively, the application can
+fetch the topology through neodriver and run pathfinding client-side.
 
 ## Constraints and indexes
 
