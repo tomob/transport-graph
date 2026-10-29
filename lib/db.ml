@@ -85,7 +85,7 @@ let load_route_stops driver route_stops =
      MATCH (s:Stop { stop_id: row.stop_id }) \
      CREATE (rs:RouteStop { route_stop_id: row.id, route_id: row.route_id, \
                             route_short_name: row.name }) \
-     CREATE (rs)-[:LOCATED_AT]->(s)"
+     CREATE (rs)-[:LOCATED_AT { time: 0.0 }]->(s)"
   in
   let row_value (rs : Graph.route_stop) =
     let open Neodriver.Values in
