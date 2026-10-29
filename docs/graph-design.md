@@ -72,6 +72,14 @@ R × (R − 1) directed edges. For the Sweden feed this is 147 607 `BOARD`
 edges instead of 11 167 762 pairwise ones; Stockholm C alone, served by
 1 128 routes, would have contributed ~1.27 M edges on its own.
 
+### Reversed mirror
+
+For pathfinding the loader also stores a reversed mirror of every
+relationship, carrying the same `time` weights: `[:PREV_STOP]` (the
+reverse of `NEXT_STOP`), `[:LOCATED_REV]` (the reverse of `LOCATED_AT`,
+weight 0) and `[:BOARD_REV]` (the reverse of `BOARD`). The search runs
+from the destination through the mirror — see "Pathfinding".
+
 ## Structure example
 
 Two physical stops served by two routes, with all three relationship types
@@ -146,11 +154,14 @@ query does not finish, because every transfer through a hub branches into
 hundreds of routes and Cypher shares no traversal work between rows.
 `find_connection` therefore uses the
 [Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/)
-plugin instead — its native Dijkstra over an in-memory projection of the
-graph, with temporary zero-cost ANCHOR relationships from the origin Stop to
-its RouteStops carrying the free entry into the network (created for the
-duration of the search, then deleted). Alternatively, the application can
-fetch the topology through neodriver and run pathfinding client-side.
+library instead — its native Dijkstra, running **from the destination Stop
+through the reversed mirror** to the origin's RouteStops (passed as the
+`targetNodes` list; the library computes the shortest path to each).
+Travelling backwards, the free entry at the origin is implicit — the
+search simply ends on an origin RouteStop without paying for any edge
+leading into it — so the projection carries nothing query-specific and is
+cached in the GDS session (or the server catalog) and reused across
+queries; `load_data` drops it whenever the data is reloaded.
 
 ## Constraints and indexes
 

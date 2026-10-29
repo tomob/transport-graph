@@ -57,15 +57,15 @@ dune exec bin/find_stop.exe -- centralstation
 
 `find_connection` requires the [Graph Data Science](https://neo4j.com/docs/graph-data-science/)
 capability on the server and supports both of its deployments: the GDS
-plugin (self-managed Neo4j, Docker) and Aura Graph Analytics, where GDS
-runs in an ephemeral session created together with the graph projection
-(the session memory is set to 2 GB; note that Aura bills sessions by
-minute with a 10-minute minimum, though the Free and Pro Trial tiers are
-not billed). The command projects the graph in memory, temporarily adds
-free relationships from the origin stop to its routes (deleted after the
-search) and runs the library's native Dijkstra. The plain-Cypher
-enumeration from the design document does not finish on a graph of this
-size.
+plugin (self-managed Neo4j, Docker) and Aura Graph Analytics. It projects
+a reversed mirror of the graph in memory — cached between queries until
+the data is reloaded — and runs the library's native Dijkstra from the
+destination to the origin's routes (repeat queries answer in well under a
+second). On Aura Graph Analytics the projection lives in an ephemeral
+session (2 GB, reused across runs, billed per active minute with a
+10-minute minimum; the Free and Pro Trial tiers are not billed). The
+plain-Cypher enumeration from the design document does not finish on a
+graph of this size.
 
 ## Testing
 

@@ -59,3 +59,12 @@ let of_path ~(origin : string) ~(names : string list) ~(stops : bool list)
     | true, true -> ()
   done;
   { legs = List.rev !legs; total }
+
+let of_reversed_path ~(origin : string) ~(names : string list)
+    ~(stops : bool list) ~(costs : float list) ~(total : float) : t =
+  (* the search runs from the destination, so the path comes back
+     reversed: flip the node lists, and turn the accumulated costs —
+     measured from the destination — into costs measured from the origin *)
+  let costs = List.rev_map (fun cost -> total -. cost) costs in
+  of_path ~origin ~names:(List.rev names) ~stops:(List.rev stops) ~costs
+    ~total

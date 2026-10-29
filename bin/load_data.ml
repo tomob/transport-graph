@@ -23,7 +23,8 @@ let process_data ~clear_db (graph : Graph.t) driver =
     let* () = Db.load_route_stops driver graph.route_stops in
     let* () = Db.load_next_stops driver graph.next_stops in
     let* () = Db.load_boards driver graph.boards in
-    Db.create_stop_name_index session
+    let* () = Db.create_stop_name_index session in
+    Db.invalidate_pathfinding driver
   in
   Session.close session;
   result
