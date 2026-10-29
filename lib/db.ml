@@ -201,3 +201,24 @@ let clear_db session =
   Printf.printf "cleared: %d nodes, %d relationships deleted\n"
     summary.counters.nodes_deleted summary.counters.relationships_deleted;
   Ok ()
+
+(* Every Stop whose name contains the fragment, ignoring case, ordered by
+   name. *)
+let find_stops ~fragment driver =
+  let query =
+    "MATCH (s:Stop) \
+     WHERE toLower(s.stop_name) CONTAINS toLower($fragment) \
+     RETURN s.stop_id AS id, s.stop_name AS name \
+     ORDER BY s.stop_name, s.stop_id"
+  in
+  let* eager =
+    Neodriver.Driver.execute_query driver ~query
+      ~parameters:[ ("fragment", Neodriver.Values.String fragment) ]
+  in
+  Ok
+    (List.filter_map
+       (function
+         | [ Neodriver.Values.Int id; Neodriver.Values.String name ] ->
+           Some (Int64.to_int id, name)
+         | _ -> None)
+       eager.records)

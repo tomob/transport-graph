@@ -7,3 +7,8 @@
  (name find_connection)
  (public_name transport_graph_find_connection)
  (libraries transport_graph cmdliner))
+
+(executable
+ (name find_stop)
+ (public_name transport_graph_find_stop)
+ (libraries transport_graph cmdliner))

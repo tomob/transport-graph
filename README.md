@@ -16,12 +16,14 @@ properties — is described in [docs/graph-design.md](docs/graph-design.md).
 
 ## Executables
 
-The project provides two executables:
+The project provides three executables:
 
 - `load_data` — reads GTFS files, parses them, and loads the data into a Neo4j
   database
 - `find_connection` — takes the names of two stops on input and prints the best
   connection found between them
+- `find_stop` — takes a fragment of a stop name and prints the stops whose
+  name contains it (case-insensitive)
 
 ## Building
 
@@ -39,7 +41,7 @@ Both executables read the Neo4j connection settings from `--uri`, `--user`,
 `--password` and `--database`, falling back to the `NEO4J_URI`,
 `NEO4J_USERNAME`, `NEO4J_PASSWORD` and `NEO4J_DATABASE` environment
 variables (an empty value counts as unset; the user and the database default
-to `neo4j`). Run either executable with `--help` for details.
+to `neo4j`). Run any executable with `--help` for details.
 
 ```sh
 # Load GTFS data into Neo4j
@@ -47,6 +49,9 @@ dune exec bin/load_data.exe -- gtfs.zip
 
 # Find the best connection between two stops
 dune exec bin/find_connection.exe -- --from "Stockholm C" --to "Uppsala C"
+
+# Look up stops by a fragment of their name
+dune exec bin/find_stop.exe -- centralstation
 ```
 
 ## Testing
