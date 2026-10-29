@@ -46,12 +46,8 @@ let search ~(config : Config.t) ~from ~to_ : (unit, string) result =
              ~auth:(Conn.basic_auth ~credentials:config.password ())
              ~workspace_config net clock sw)
       in
-      let* origins =
-        Result.map_error Errors.to_string (Db.find_stops_named ~name:from driver)
-      in
-      let* destinations =
-        Result.map_error Errors.to_string
-          (Db.find_stops_named ~name:to_ driver)
+      let* origins, destinations =
+        Result.map_error Errors.to_string (Db.resolve_stops ~from ~to_ driver)
       in
       (match origins, destinations with
        | [], _ ->

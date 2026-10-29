@@ -226,23 +226,35 @@ let find_stops ~fragment driver =
          | _ -> None)
        eager.records)
 
-(* The stops whose name equals [name] exactly, ignoring case. *)
-let find_stops_named ~name driver =
-  let query =
-    "MATCH (s:Stop) WHERE toLower(s.stop_name) = toLower($name) \
-     RETURN s.stop_id AS id, s.stop_name AS name ORDER BY s.stop_id"
+(* Resolve the origin and destination stops — all same-named candidates
+   for each — in a single round trip. *)
+let resolve_stops ~from ~to_ driver =
+  let pairs = function
+    | Neodriver.Values.List rows ->
+      List.filter_map
+        (function
+          | Neodriver.Values.List
+              [ Neodriver.Values.Int id; Neodriver.Values.String name ] ->
+            Some (Int64.to_int id, name)
+          | _ -> None)
+        rows
+    | _ -> []
   in
   let* eager =
-    Neodriver.Driver.execute_query driver ~query
-      ~parameters:[ ("name", Neodriver.Values.String name) ]
+    Neodriver.Driver.execute_query driver
+      ~query:
+        "MATCH (o:Stop) WHERE toLower(o.stop_name) = toLower($from) \
+         WITH collect([o.stop_id, o.stop_name]) AS origins \
+         MATCH (d:Stop) WHERE toLower(d.stop_name) = toLower($to) \
+         RETURN origins, collect([d.stop_id, d.stop_name]) AS destinations"
+      ~parameters:
+        [ ("from", Neodriver.Values.String from)
+        ; ("to", Neodriver.Values.String to_) ]
   in
-  Ok
-    (List.filter_map
-       (function
-         | [ Neodriver.Values.Int id; Neodriver.Values.String name ] ->
-           Some (Int64.to_int id, name)
-         | _ -> None)
-       eager.records)
+  match eager.Neodriver.EagerResult.records with
+  | [ [ origins; destinations ] ] ->
+    Ok (pairs origins, pairs destinations)
+  | _ -> Ok ([], [])
 
 (* The fastest connection between two stops, found by the database itself:
    the native Dijkstra of the Neo4j Graph Data Science library. The search
@@ -294,58 +306,94 @@ let find_best_journey ~from ~to_ driver =
               ~costs:(floats costs) ~total))
     | _ -> Ok None
   in
-  (* Aura Graph Analytics runs GDS in ephemeral sessions; its projection
-     takes flat label/type lists and needs a session. The session
-     procedures exist only there, so they tell the two variants apart. *)
-  let* aga =
-    let* eager =
-      run
-        "SHOW PROCEDURES YIELD name WHERE name = 'gds.session.getOrCreate' \
-         RETURN name"
-        []
-    in
-    Ok (eager.Neodriver.EagerResult.records <> [])
+  (* The warm path is a single bridge call: the Dijkstra resolves the
+     cached projection by name, without any session handshake. Everything
+     below runs only when the projection is missing. *)
+  let search_query =
+    "MATCH (o:Stop) WHERE toLower(o.stop_name) = toLower($from) \
+     OPTIONAL MATCH (o)<-[:LOCATED_AT]-(rs:RouteStop) \
+     WITH o, collect(DISTINCT rs) AS sources \
+     WHERE size(sources) > 0 \
+     MATCH (d:Stop) WHERE toLower(d.stop_name) = toLower($to) \
+     CALL gds.shortestPath.dijkstra.stream('transport-rev', \
+       { sourceNode: d, targetNodes: sources, \
+         relationshipWeightProperty: 'time' }) \
+     YIELD totalCost, nodeIds, costs \
+     WITH o, totalCost, nodeIds, costs ORDER BY totalCost LIMIT 1 \
+     UNWIND nodeIds AS nodeId \
+     MATCH (n) WHERE id(n) = nodeId \
+     WITH o, totalCost, costs, collect(n) AS nodes \
+     RETURN o.stop_name AS origin, \
+            [n IN nodes | CASE WHEN n:Stop THEN n.stop_name ELSE \
+              CASE WHEN n.route_short_name = '' THEN n.route_id \
+                   ELSE n.route_short_name END END] AS names, \
+            [n IN nodes | n:Stop] AS stops, \
+            costs, \
+            totalCost AS total"
   in
-  let session_name = "transport-graph" in
-  let session_memory = "2GB" in
-  (* a named session is reused across runs instead of paying the cold start
-     of an implicit session every time; it expires after 30 minutes of
-     inactivity *)
-  let* session_id =
-    if aga then
-      let* eager =
+  let search () =
+    run search_query
+      [ ("from", Neodriver.Values.String from)
+      ; ("to", Neodriver.Values.String to_) ]
+  in
+  match search () with
+  | Ok eager -> journey_of eager.Neodriver.EagerResult.records
+  | Error error ->
+    (* The cached projection may be missing — a fresh session, an expired
+       one, or reloaded data. Check, and only then pay for the session
+       handshake and the projection. *)
+    let* cached =
+      let* exists_eager =
         run
-          (Printf.sprintf
-             "CALL gds.session.getOrCreate('%s', '%s', \
-              duration({ minutes: 30 })) YIELD id RETURN id"
-             session_name session_memory)
+          "CALL gds.graph.exists('transport-rev') YIELD exists RETURN exists"
           []
       in
       Ok
-        (match eager.Neodriver.EagerResult.records with
-         | [ [ Neodriver.Values.String id ] ] -> Some id
-         | _ -> None)
-    else Ok None
-  in
-  let session_config =
-    match session_id with
-    | Some id -> Printf.sprintf ", sessionId: '%s' " id
-    | None ->
-      if aga then Printf.sprintf ", memory: '%s' " session_memory else " "
-  in
-  (* project only when the cache is empty *)
-  let* cached =
-    let* eager =
-      run "CALL gds.graph.exists('transport-rev') YIELD exists RETURN exists" []
+        (match exists_eager.Neodriver.EagerResult.records with
+         | [ [ Neodriver.Values.Bool exists ] ] -> exists
+         | _ -> false)
     in
-    Ok
-      (match eager.Neodriver.EagerResult.records with
-       | [ [ Neodriver.Values.Bool exists ] ] -> exists
-       | _ -> false)
-  in
-  let* () =
-    if cached then Ok ()
-    else
+    if cached then Error error
+    else begin
+      Printf.eprintf "note: projecting the graph for pathfinding\n";
+      (* Aura Graph Analytics runs GDS in ephemeral sessions; its
+         projection takes flat label/type lists and needs a session. The
+         session procedures exist only there, so they tell the two
+         variants apart. *)
+      let* aga =
+        let* procedures =
+          run
+            "SHOW PROCEDURES YIELD name \
+             WHERE name = 'gds.session.getOrCreate' RETURN name"
+            []
+        in
+        Ok (procedures.Neodriver.EagerResult.records <> [])
+      in
+      let session_name = "transport-graph" in
+      let session_memory = "2GB" in
+      let* session_id =
+        if aga then
+          let* session_eager =
+            run
+              (Printf.sprintf
+                 "CALL gds.session.getOrCreate('%s', '%s', \
+                  duration({ minutes: 30 })) YIELD id RETURN id"
+                 session_name session_memory)
+              []
+          in
+          Ok
+            (match session_eager.Neodriver.EagerResult.records with
+             | [ [ Neodriver.Values.String id ] ] -> Some id
+             | _ -> None)
+        else Ok None
+      in
+      let session_config =
+        match session_id with
+        | Some id -> Printf.sprintf ", sessionId: '%s' " id
+        | None ->
+          if aga then Printf.sprintf ", memory: '%s' " session_memory
+          else " "
+      in
       let* _ =
         run
           (Printf.sprintf
@@ -356,35 +404,10 @@ let find_best_journey ~from ~to_ driver =
              session_config)
           []
       in
-      Ok ()
-  in
-  let search =
-    run
-      "MATCH (o:Stop) WHERE toLower(o.stop_name) = toLower($from) \
-       OPTIONAL MATCH (o)<-[:LOCATED_AT]-(rs:RouteStop) \
-       WITH o, collect(DISTINCT rs) AS sources \
-       WHERE size(sources) > 0 \
-       MATCH (d:Stop) WHERE toLower(d.stop_name) = toLower($to) \
-       CALL gds.shortestPath.dijkstra.stream('transport-rev', \
-         { sourceNode: d, targetNodes: sources, \
-           relationshipWeightProperty: 'time' }) \
-       YIELD totalCost, nodeIds, costs \
-       WITH o, totalCost, nodeIds, costs ORDER BY totalCost LIMIT 1 \
-       UNWIND nodeIds AS nodeId \
-       MATCH (n) WHERE id(n) = nodeId \
-       WITH o, totalCost, costs, collect(n) AS nodes \
-       RETURN o.stop_name AS origin, \
-              [n IN nodes | CASE WHEN n:Stop THEN n.stop_name ELSE \
-                CASE WHEN n.route_short_name = '' THEN n.route_id \
-                     ELSE n.route_short_name END END] AS names, \
-              [n IN nodes | n:Stop] AS stops, \
-              costs, \
-              totalCost AS total"
-      [ ("from", Neodriver.Values.String from)
-      ; ("to", Neodriver.Values.String to_) ]
-  in
-  let* eager = search in
-  journey_of eager.Neodriver.EagerResult.records
+      let* eager = search () in
+      journey_of eager.Neodriver.EagerResult.records
+    end
+
 
 (* Drop the cached pathfinding projection: the data has changed, so the
    reversed mirror in the GDS session is stale. Best effort — the server
