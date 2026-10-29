@@ -14,6 +14,7 @@ let clear_db =
 let process_data ~clear_db driver =
   let session = Driver.session driver in
   let result =
+    let* () = Transport_graph.Db.create_constraints session in
     if clear_db then Transport_graph.Db.clear_db session else Ok ()
   in
   Session.close session;
