@@ -331,12 +331,10 @@ let find_best_journey ~from ~to_ driver =
             costs, \
             totalCost AS total"
   in
-  let search () =
-    run search_query
+  match run search_query
       [ ("from", Neodriver.Values.String from)
       ; ("to", Neodriver.Values.String to_) ]
-  in
-  match search () with
+  with
   | Ok eager -> journey_of eager.Neodriver.EagerResult.records
   | Error error ->
     (* The cached projection may be missing — a fresh session, an expired
